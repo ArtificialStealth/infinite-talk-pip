@@ -1,14 +1,21 @@
-# InfiniteTalk + PIP Composition
+# InfiniteTalk + RVM + PIP Composition
 FROM wlsdml1114/multitalk-base:1.7 as runtime
 
-# Install wget and ffmpeg for PIP composition
-RUN apt-get update && apt-get install -y wget ffmpeg && rm -rf /var/lib/apt/lists/*
+# Install wget, ffmpeg, and git
+RUN apt-get update && apt-get install -y wget ffmpeg git && rm -rf /var/lib/apt/lists/*
 
 RUN pip install -U "huggingface_hub[hf_transfer]"
 RUN pip install runpod websocket-client librosa
 
+# Install PyTorch and torchvision for RVM
+RUN pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+
+# Install PIL for image processing
+RUN pip install pillow
+
 WORKDIR /
 
+# Clone ComfyUI and custom nodes
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git && \
     cd /ComfyUI && \
     pip install -r requirements.txt
@@ -46,7 +53,7 @@ RUN cd /ComfyUI/custom_nodes && \
     cd ComfyUI-WanVideoWrapper && \
     pip install -r requirements.txt
 
-# Download models
+# Download InfiniteTalk models
 RUN wget -q https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/InfiniteTalk/Wan2_1-InfiniteTalk-Single_fp8_e4m3fn_scaled_KJ.safetensors -O /ComfyUI/models/diffusion_models/Wan2_1-InfiniteTalk-Single_fp8_e4m3fn_scaled_KJ.safetensors
 RUN wget -q https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/InfiniteTalk/Wan2_1-InfiniteTalk-Multi_fp8_e4m3fn_scaled_KJ.safetensors -O /ComfyUI/models/diffusion_models/Wan2_1-InfiniteTalk-Multi_fp8_e4m3fn_scaled_KJ.safetensors
 RUN wget -q https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Wan2_1-I2V-14B-480P_fp8_e4m3fn.safetensors -O /ComfyUI/models/diffusion_models/Wan2_1-I2V-14B-480P_fp8_e4m3fn.safetensors
@@ -55,6 +62,14 @@ RUN wget -q https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Wan2_1_VAE_
 RUN wget -q https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/umt5-xxl-enc-bf16.safetensors -O /ComfyUI/models/text_encoders/umt5-xxl-enc-bf16.safetensors
 RUN wget -q https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors -O /ComfyUI/models/clip_vision/clip_vision_h.safetensors
 RUN wget -q https://huggingface.co/Kijai/MelBandRoFormer_comfy/resolve/main/MelBandRoformer_fp16.safetensors -O /ComfyUI/models/diffusion_models/MelBandRoformer_fp16.safetensors
+
+# Download RVM (Robust Video Matting) model
+RUN mkdir -p /rvm && \
+    wget -q https://github.com/PeterL1n/RobustVideoMatting/releases/download/v1.0.0/rvm_mobilenetv3.pth -O /rvm_mobilenetv3.pth && \
+    wget -q https://github.com/PeterL1n/RobustVideoMatting/releases/download/v1.0.0/rvm_mobilenetv3_fp32.torchscript -O /rvm_mobilenetv3_fp32.torchscript
+
+# Clone RVM repo for model architecture
+RUN git clone https://github.com/PeterL1n/RobustVideoMatting.git /rvm
 
 COPY . .
 RUN chmod +x /entrypoint.sh
