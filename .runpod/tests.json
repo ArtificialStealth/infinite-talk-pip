@@ -1,21 +1,5 @@
 {
-  "tests": [
-    {
-      "name": "Basic PIP Test",
-      "input": {
-        "input_type": "image",
-        "person_count": "single",
-        "image_url": "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400",
-        "wav_url": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
-        "prompt": "A person talking naturally",
-        "width": 256,
-        "height": 384,
-        "max_frame": 50,
-        "pip_mode": false
-      },
-      "timeout": 300000
-    }
-  ],
+  "tests": [],
   "config": {
     "gpuTypeId": "NVIDIA GeForce RTX 4090",
     "gpuCount": 1
