@@ -460,10 +460,13 @@ def create_background_slideshow(image_paths, duration, output_path):
     
     for i, path in enumerate(image_paths):
         input_args.extend(['-loop', '1', '-t', str(time_per_image), '-i', path])
+        # Scale to fit (not crop) - adds black bars if aspect ratio differs
+        # Use pad to center the image on the 9:16 canvas
         filter_parts.append(
             f"[{i}:v]scale={config['final_width']}:{config['final_height']}:"
-            f"force_original_aspect_ratio=increase,"
-            f"crop={config['final_width']}:{config['final_height']},setsar=1[v{i}]"
+            f"force_original_aspect_ratio=decrease,"
+            f"pad={config['final_width']}:{config['final_height']}:(ow-iw)/2:(oh-ih)/2:black,"
+            f"setsar=1[v{i}]"
         )
     
     concat = ''.join([f"[v{i}]" for i in range(len(image_paths))])
@@ -482,12 +485,12 @@ def create_background_slideshow(image_paths, duration, output_path):
     
     if result.returncode != 0:
         logger.error(f"Slideshow creation failed: {result.stderr[:500]}")
-        # Fallback: use first image as static background
+        # Fallback: use first image as static background (fit, not crop)
         cmd = [
             'ffmpeg', '-y', '-loop', '1', '-i', image_paths[0],
             '-vf', f'scale={config["final_width"]}:{config["final_height"]}:'
-                   f'force_original_aspect_ratio=increase,'
-                   f'crop={config["final_width"]}:{config["final_height"]}',
+                   f'force_original_aspect_ratio=decrease,'
+                   f'pad={config["final_width"]}:{config["final_height"]}:(ow-iw)/2:(oh-ih)/2:black',
             '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-t', str(duration),
             output_path
         ]
