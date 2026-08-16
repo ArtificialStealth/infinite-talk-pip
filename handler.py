@@ -57,6 +57,13 @@ import shutil
 import time
 import traceback
 
+from composition_renderer import (
+    CompositionValidationError,
+    build_ass_captions,
+    build_ffmpeg_command,
+    validate_composition,
+)
+
 # Try to import librosa, fallback to ffprobe for audio duration
 try:
     import librosa
@@ -826,6 +833,57 @@ def composite_with_chromakey(background_path, avatar_path, audio_path, output_pa
     return False
 
 
+def detect_asset_kind(path):
+    """Classify a downloaded editor asset without trusting its URL suffix."""
+    try:
+        from PIL import Image
+        with Image.open(path) as image:
+            image.verify()
+        return "image"
+    except Exception:
+        pass
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "json", path],
+        capture_output=True, text=True, timeout=30,
+    )
+    if result.returncode != 0:
+        raise CompositionValidationError("unsupported downloaded asset")
+    streams = json.loads(result.stdout or "{}").get("streams", [])
+    kinds = {stream.get("codec_type") for stream in streams if isinstance(stream, dict)}
+    if "video" in kinds:
+        return "video"
+    if "audio" in kinds:
+        return "audio"
+    raise CompositionValidationError("unsupported downloaded asset")
+
+
+def render_editor_composition(job_input, composition, avatar_video_path, wav_path, task_dir):
+    """Download immutable assets and render the exact saved Studio document."""
+    render_dir = os.path.join(task_dir, "composition")
+    os.makedirs(render_dir, exist_ok=True)
+    asset_inputs = {}
+    for index, (asset_id, url) in enumerate(sorted(job_input.get("assets", {}).items())):
+        asset_path = os.path.join(render_dir, "asset_%02d.media" % index)
+        download_file(url, asset_path, timeout=PIP_CONFIG["download_timeout"])
+        asset_inputs[asset_id] = {"path": asset_path, "kind": detect_asset_kind(asset_path)}
+
+    captions_path = os.path.join(render_dir, "captions.ass")
+    with open(captions_path, "w", encoding="utf-8") as captions_file:
+        captions_file.write(build_ass_captions(composition, job_input.get("captions", {})))
+    output_path = os.path.join(render_dir, "final_composition.mp4")
+    command = build_ffmpeg_command(
+        composition, asset_inputs, avatar_video_path, wav_path, captions_path, output_path,
+    )
+    logger.info("🎬 Rendering validated Studio composition with %d clips", len(composition["clips"]))
+    result = subprocess.run(command, capture_output=True, text=True, timeout=900)
+    if result.returncode != 0:
+        logger.error("Studio composition failed: %s", result.stderr[-2000:])
+        raise RuntimeError("dynamic composition ffmpeg failed")
+    if not os.path.exists(output_path) or os.path.getsize(output_path) < 1:
+        raise RuntimeError("dynamic composition output missing")
+    return output_path
+
+
 # ============================================
 # MAIN HANDLER
 # ============================================
@@ -854,6 +912,16 @@ def handler(job):
         # VALIDATE INPUTS
         # ============================================
         
+        render_type = job_input.get("render_type")
+        editor_composition = None
+        if render_type == "ugc_composition_v1":
+            try:
+                editor_composition = validate_composition(job_input.get("composition"), job_input.get("assets", {}))
+            except CompositionValidationError as error:
+                return create_error_response(str(error), ErrorCode.INVALID_INPUT)
+        elif render_type is not None:
+            return create_error_response("Unsupported render_type", ErrorCode.INVALID_INPUT)
+
         input_type = job_input.get("input_type", "image")
         person_count = job_input.get("person_count", "single")
         pip_mode = job_input.get("pip_mode", False)
@@ -999,7 +1067,18 @@ def handler(job):
         pip_applied = False
         rvm_used = False
         
-        if pip_mode:
+        if render_type == "ugc_composition_v1":
+            logger.info("=" * 40)
+            logger.info("🎬 DYNAMIC STUDIO COMPOSITION...")
+            logger.info("=" * 40)
+            final_video_path = render_editor_composition(
+                job_input, editor_composition, avatar_video_path, wav_path, task_dir
+            )
+            final_resolution = "%dx%d" % (
+                editor_composition["canvas"]["width"], editor_composition["canvas"]["height"]
+            )
+            logger.info("✅ Dynamic Studio composition complete")
+        elif pip_mode:
             logger.info("=" * 40)
             logger.info("🎬 PIP COMPOSITION...")
             logger.info("=" * 40)
