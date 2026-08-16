@@ -15,6 +15,12 @@ class HandlerContractTests(unittest.TestCase):
         self.assertIn("COPY . .", source)
         self.assertTrue(pathlib.Path("composition_renderer.py").exists())
 
+    def test_comfyui_rejections_preserve_the_validation_response(self):
+        source = pathlib.Path("handler.py").read_text()
+        self.assertIn("except urllib.error.HTTPError as error:", source)
+        self.assertIn("error.read().decode", source)
+        self.assertIn("ComfyUI rejected workflow", source)
+
 
 if __name__ == "__main__":
     unittest.main()

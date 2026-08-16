@@ -50,6 +50,7 @@ import base64
 import json
 import uuid
 import logging
+import urllib.error
 import urllib.request
 import urllib.parse
 import subprocess
@@ -563,7 +564,13 @@ def queue_prompt(prompt, client_id):
     req = urllib.request.Request(url, data=data)
     req.add_header("Content-Type", "application/json")
     
-    response = urllib.request.urlopen(req, timeout=30)
+    try:
+        response = urllib.request.urlopen(req, timeout=30)
+    except urllib.error.HTTPError as error:
+        response_body = error.read().decode("utf-8", errors="replace")[:4096]
+        raise RuntimeError(
+            f"ComfyUI rejected workflow (HTTP {error.code}): {response_body}"
+        ) from error
     return json.loads(response.read())
 
 
