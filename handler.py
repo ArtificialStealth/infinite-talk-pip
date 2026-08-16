@@ -64,6 +64,7 @@ from composition_renderer import (
     build_ffmpeg_command,
     validate_composition,
 )
+from comfy_input_staging import cleanup_comfy_inputs, stage_comfy_inputs
 
 # Try to import librosa, fallback to ffprobe for audio duration
 try:
@@ -900,6 +901,7 @@ def handler(job):
     job_id = job.get("id", str(uuid.uuid4()))
     task_id = f"task_{uuid.uuid4()}"
     task_dir = f"/{task_id}"
+    comfy_staging = None
     
     logger.info("=" * 60)
     logger.info(f"🚀 JOB STARTED: {job_id}")
@@ -1006,6 +1008,11 @@ def handler(job):
         
         logger.info(f"Media: {media_path} ({os.path.getsize(media_path)} bytes)")
         logger.info(f"Audio: {wav_path} ({os.path.getsize(wav_path)} bytes)")
+
+        comfy_audio_paths = [wav_path]
+        if person_count == "multi" and wav_path_2:
+            comfy_audio_paths.append(wav_path_2)
+        comfy_staging = stage_comfy_inputs(media_path, comfy_audio_paths, task_id)
         
         # ============================================
         # CONFIGURE WORKFLOW
@@ -1025,11 +1032,11 @@ def handler(job):
             max_frame = calculate_max_frames(wav_path, wav_path_2)
         
         if input_type == "image":
-            prompt["284"]["inputs"]["image"] = media_path
+            prompt["284"]["inputs"]["image"] = comfy_staging.media_reference
         else:
-            prompt["228"]["inputs"]["video"] = media_path
+            prompt["228"]["inputs"]["video"] = comfy_staging.media_reference
         
-        prompt["125"]["inputs"]["audio"] = wav_path
+        prompt["125"]["inputs"]["audio"] = comfy_staging.audio_references[0]
         prompt["241"]["inputs"]["positive_prompt"] = prompt_text
         prompt["245"]["inputs"]["value"] = width
         prompt["246"]["inputs"]["value"] = height
@@ -1037,9 +1044,9 @@ def handler(job):
         
         if person_count == "multi" and wav_path_2:
             if "307" in prompt:
-                prompt["307"]["inputs"]["audio"] = wav_path_2
+                prompt["307"]["inputs"]["audio"] = comfy_staging.audio_references[1]
             elif "313" in prompt:
-                prompt["313"]["inputs"]["audio"] = wav_path_2
+                prompt["313"]["inputs"]["audio"] = comfy_staging.audio_references[1]
         
         logger.info(f"Settings: {width}x{height}, {max_frame} frames, prompt='{prompt_text[:50]}...'")
         
@@ -1199,6 +1206,8 @@ def handler(job):
         )
     
     finally:
+        if comfy_staging is not None:
+            cleanup_comfy_inputs(comfy_staging.directory)
         cleanup_temp_dir(task_dir)
         logger.info("=" * 60)
         logger.info(f"🏁 JOB COMPLETED: {job_id}")
