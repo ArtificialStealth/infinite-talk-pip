@@ -43,13 +43,15 @@ class FfmpegRenderIntegrationTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr[-2000:])
             self.assertGreater(os.path.getsize(output), 1000)
             probe = subprocess.run(
-                ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,width,height", "-of", "json", output],
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration:stream=codec_type,width,height", "-of", "json", output],
                 check=True, capture_output=True, text=True,
             )
-            streams = json.loads(probe.stdout)["streams"]
+            metadata = json.loads(probe.stdout)
+            streams = metadata["streams"]
             video = next(stream for stream in streams if stream["codec_type"] == "video")
             self.assertEqual((video["width"], video["height"]), (1080, 1920))
             self.assertTrue(any(stream["codec_type"] == "audio" for stream in streams))
+            self.assertAlmostEqual(float(metadata["format"]["duration"]), 1.0, delta=1 / 30)
 
 
 if __name__ == "__main__":

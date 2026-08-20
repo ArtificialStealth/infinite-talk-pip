@@ -159,6 +159,14 @@ def build_ass_captions(composition, captions):
     ])
     words = captions.get("words", []) if isinstance(captions, dict) else []
     phrases = captions.get("phrases", []) if isinstance(captions, dict) else []
+    duration_ms = canvas["durationMs"]
+    for item in words + phrases:
+        if not isinstance(item, dict):
+            raise CompositionValidationError("invalid caption timing")
+        start_ms = _number(item.get("startMs"), "caption timing", 0, duration_ms)
+        end_ms = _number(item.get("endMs"), "caption timing", 0, duration_ms)
+        if end_ms <= start_ms:
+            raise CompositionValidationError("invalid caption timing")
     events = []
     for phrase in phrases:
         if not isinstance(phrase, dict):

@@ -98,6 +98,22 @@ class CompositionValidationTests(unittest.TestCase):
 
 
 class FfmpegCompositionTests(unittest.TestCase):
+    def test_uses_the_frame_aligned_voice_driven_canvas_duration(self):
+        document = composition()
+        document["canvas"]["durationMs"] = 16600
+        for clip in document["clips"]:
+            if clip["kind"] in {"avatar", "caption"}:
+                clip["durationMs"] = 16600
+        normalized = validate_composition(document, {"asset-1": "https://example.test/product.png"})
+
+        command = build_ffmpeg_command(
+            normalized,
+            {"asset-1": {"path": "/tmp/product.png", "kind": "image"}},
+            "/tmp/avatar.mp4", "/tmp/voice.mp3", "/tmp/captions.ass", "/tmp/final.mp4",
+        )
+
+        self.assertEqual(command[command.index("-t") + 1], "16.600")
+
     def test_builds_exact_timed_z_ordered_visual_filters_without_a_shell(self):
         document = validate_composition(composition(), {"asset-1": "https://example.test/product.png"})
         command = build_ffmpeg_command(
@@ -134,6 +150,18 @@ class FfmpegCompositionTests(unittest.TestCase):
 
 
 class CaptionTests(unittest.TestCase):
+    def test_rejects_caption_words_beyond_the_effective_canvas(self):
+        captions = {
+            "words": [{"text": "cut", "startMs": 14900, "endMs": 16580}],
+            "phrases": [{"text": "cut", "startMs": 14900, "endMs": 16580, "wordStart": 0, "wordEnd": 1}],
+        }
+
+        with self.assertRaisesRegex(CompositionValidationError, "caption timing"):
+            build_ass_captions(
+                validate_composition(composition(), {"asset-1": "https://example.test/product.png"}),
+                captions,
+            )
+
     def test_ass_uses_voice_word_timing_position_and_active_word_color(self):
         captions = {
             "words": [
