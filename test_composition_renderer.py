@@ -136,7 +136,7 @@ class FfmpegCompositionTests(unittest.TestCase):
         self.assertIn("-crf", command)
         self.assertEqual(command[command.index("-crf") + 1], "18")
 
-    def test_contain_fit_uses_padding_instead_of_crop(self):
+    def test_smaller_contain_fit_uses_transparent_padding_instead_of_crop(self):
         document = composition()
         document["clips"][1]["fitMode"] = "contain"
         normalized = validate_composition(document, {"asset-1": "https://example.test/product.png"})
@@ -146,7 +146,22 @@ class FfmpegCompositionTests(unittest.TestCase):
             "/tmp/avatar.mp4", "/tmp/voice.mp3", "/tmp/captions.ass", "/tmp/final.mp4",
         )
         filters = command[command.index("-filter_complex") + 1]
-        self.assertIn("force_original_aspect_ratio=decrease,pad=324:324", filters)
+        self.assertIn("force_original_aspect_ratio=decrease,pad=324:324:(ow-iw)/2:(oh-ih)/2:color=black@0", filters)
+
+    def test_fullscreen_contain_fit_uses_opaque_black_padding(self):
+        document = composition()
+        document["clips"][1]["fitMode"] = "contain"
+        document["clips"][1]["transform"] = {
+            "x": 0, "y": 0, "width": 1080, "height": 1920, "rotation": 0,
+        }
+        normalized = validate_composition(document, {"asset-1": "https://example.test/product.png"})
+        command = build_ffmpeg_command(
+            normalized,
+            {"asset-1": {"path": "/tmp/product.png", "kind": "image"}},
+            "/tmp/avatar.mp4", "/tmp/voice.mp3", "/tmp/captions.ass", "/tmp/final.mp4",
+        )
+        filters = command[command.index("-filter_complex") + 1]
+        self.assertIn("force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black@1", filters)
 
 
 class CaptionTests(unittest.TestCase):

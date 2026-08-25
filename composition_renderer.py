@@ -195,12 +195,25 @@ def build_ass_captions(composition, captions):
     return header + "\n" + "\n".join(events) + "\n"
 
 
-def _fit_filter(clip):
+def _uses_fullscreen_black_matte(clip, canvas):
+    transform = clip.get("transform") or {}
+    return (
+        clip.get("kind") in {"background", "overlay"}
+        and clip.get("fitMode") == "contain"
+        and transform.get("x") == 0
+        and transform.get("y") == 0
+        and transform.get("width") == canvas["width"]
+        and transform.get("height") == canvas["height"]
+    )
+
+
+def _fit_filter(clip, canvas):
     transform = clip["transform"]
     width, height = round(transform["width"]), round(transform["height"])
     fit = clip.get("fitMode", "cover")
     if fit == "contain":
-        return "scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black@0" % (width, height, width, height)
+        matte_alpha = 1 if _uses_fullscreen_black_matte(clip, canvas) else 0
+        return "scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black@%d" % (width, height, width, height, matte_alpha)
     if fit == "fit-width":
         return "scale=%d:-2,crop=%d:%d:(iw-ow)/2:(ih-oh)/2" % (width, width, height)
     if fit == "fit-height":
@@ -260,7 +273,7 @@ def build_ffmpeg_command(composition, asset_inputs, avatar_path, voice_path, cap
         duration = clip["durationMs"] / 1000.0
         clip_label = "clip%d" % index
         chain = "[%d:v]trim=start=%.3f:duration=%.3f,setpts=PTS-STARTPTS+%.3f/TB,%s%s" % (
-            source_index, offset, duration, start, _fit_filter(clip), _mask_filter(clip),
+            source_index, offset, duration, start, _fit_filter(clip, canvas), _mask_filter(clip),
         )
         opacity = float(clip.get("opacity", 1))
         if opacity < 1:
