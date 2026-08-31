@@ -124,7 +124,10 @@ class FfmpegRenderIntegrationTests(unittest.TestCase):
                                         "both old and new caption positions visible on frame %d" % index)
 
     def test_popup_and_caption_switch_together_at_half_open_frame_boundaries(self):
-        for start_ms, duration_ms, start_frame, end_frame in [(250, 250, 8, 15), (101, 400, 4, 16), (100, 401, 3, 16)]:
+        for start_ms, duration_ms, start_frame, end_frame in [
+            (250, 250, 8, 15), (101, 400, 4, 16), (100, 401, 3, 16),
+            (8 * 1000 / 30, 8 * 1000 / 30, 8, 16),
+        ]:
             with self.subTest(start_ms=start_ms, duration_ms=duration_ms):
                 self.assert_popup_and_caption_timing(start_ms, duration_ms, start_frame, end_frame)
 

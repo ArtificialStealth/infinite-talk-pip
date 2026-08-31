@@ -163,6 +163,18 @@ class FfmpegCompositionTests(unittest.TestCase):
         self.assertIn("format=rgba,rotate=30.000000*PI/180:c=none:ow=rotw(30.000000*PI/180):oh=roth(30.000000*PI/180)", filters)
         self.assertIn("overlay='380+(320-overlay_w)/2':'1400+(160-overlay_h)/2'", filters)
 
+    def test_visual_frame_boundaries_tolerate_rational_timestamp_roundoff(self):
+        document = composition()
+        document["clips"][1].update(startMs=8 * 1000 / 30, durationMs=8 * 1000 / 30)
+        normalized = validate_composition(document, {"asset-1": "https://example.test/product.png"})
+        command = build_ffmpeg_command(
+            normalized, {"asset-1": {"path": "/tmp/product.png", "kind": "image"}},
+            "/tmp/avatar.mp4", "/tmp/voice.mp3", None, "/tmp/final.mp4",
+        )
+        filters = command[command.index("-filter_complex") + 1]
+        self.assertIn("enable='gte(n,8)*lt(n,16)'", filters)
+        self.assertIn("trim=end_frame=8,setpts=PTS+8", filters)
+
     def test_smaller_contain_fit_uses_transparent_padding_instead_of_crop(self):
         document = composition()
         document["clips"][1]["fitMode"] = "contain"
@@ -286,6 +298,38 @@ class CaptionTests(unittest.TestCase):
             build_ass_captions(document, captions)
         captions["positionSchedule"]["segments"][-1]["endFrame"] = 451
         self.assertIn(r"\an5", build_ass_captions(document, captions))
+
+    def test_schedule_coverage_tolerates_rational_frame_duration_roundoff(self):
+        document = composition()
+        document["canvas"]["durationMs"] = 32 * 1000 / 30
+        captions = self.scheduled_captions()
+        captions["positionSchedule"]["segments"][-1]["endFrame"] = 32
+        try:
+            ass = build_ass_captions(document, captions)
+        except CompositionValidationError as error:
+            self.fail("Exact 32-frame duration must accept 32-frame schedule: %s" % error)
+        self.assertIn(r"\an5", ass)
+
+    def test_scheduled_phrase_boundaries_tolerate_rational_timestamp_roundoff(self):
+        captions = self.scheduled_captions()
+        captions["words"] = [{"text": "Frame", "startMs": 0, "endMs": 1000}]
+        captions["phrases"] = [{"startMs": 8 * 1000 / 30, "endMs": 16 * 1000 / 30,
+                                "wordStart": 0, "wordEnd": 1}]
+        events = self.events(composition(), captions)
+        self.assertEqual(len(events), 1)
+        self.assertIn("0:00:00.26,0:00:00.53", events[0])
+
+    def test_scheduled_word_boundaries_tolerate_rational_timestamp_roundoff(self):
+        captions = self.scheduled_captions()
+        captions["words"] = [{"text": "Frame", "startMs": 8 * 1000 / 30, "endMs": 16 * 1000 / 30}]
+        captions["phrases"] = [{"startMs": 0, "endMs": 1000, "wordStart": 0, "wordEnd": 1}]
+        captions["positionSchedule"]["segments"] = [{"startFrame": 0, "endFrame": 450, "x": 0.5, "y": 0.82}]
+        events = self.events(composition(), captions)
+        self.assertEqual(len(events), 3)
+        self.assertIn("0:00:00.00,0:00:00.26", events[0])
+        self.assertIn("0:00:00.26,0:00:00.53", events[1])
+        self.assertIn(r"{\c&HEED322&}Frame", events[1])
+        self.assertIn("0:00:00.53,0:00:01.00", events[2])
 
     def test_rejects_malformed_supplied_schedule_even_without_phrases(self):
         valid = self.scheduled_captions()["positionSchedule"]

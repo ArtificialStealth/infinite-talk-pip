@@ -116,6 +116,12 @@ def _ass_text(value):
     return str(value).replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}").replace("\n", "\\N")
 
 
+def _first_frame_at_or_after(milliseconds, fps):
+    # Match the editor's firstFrame conversion: frame-derived milliseconds
+    # (for example 8 * 1000 / 30) can round a few ulps above an integer frame.
+    return math.ceil(milliseconds * fps / 1000 - 1e-8)
+
+
 def _caption_position_schedule(captions, canvas):
     if not isinstance(captions, dict) or "positionSchedule" not in captions:
         return None
@@ -130,7 +136,7 @@ def _caption_position_schedule(captions, canvas):
     segments = schedule.get("segments")
     if not isinstance(segments, list) or not segments:
         raise CompositionValidationError("invalid " + label + " segments")
-    total_frames = math.ceil(canvas["durationMs"] * schedule["fps"] / 1000)
+    total_frames = _first_frame_at_or_after(canvas["durationMs"], schedule["fps"])
     expected_start = 0
     for segment in segments:
         if not isinstance(segment, dict):
@@ -155,10 +161,10 @@ def _ass_frame_time(frame, fps):
 
 def _scheduled_phrase_intervals(phrase, words, schedule, highlight):
     fps = schedule["fps"]
-    start = math.ceil(phrase["startMs"] * fps / 1000)
-    end = math.ceil(phrase["endMs"] * fps / 1000)
+    start = _first_frame_at_or_after(phrase["startMs"], fps)
+    end = _first_frame_at_or_after(phrase["endMs"], fps)
     word_frames = [
-        (math.ceil(word["startMs"] * fps / 1000), math.ceil(word["endMs"] * fps / 1000))
+        (_first_frame_at_or_after(word["startMs"], fps), _first_frame_at_or_after(word["endMs"], fps))
         for word in words
     ]
     for segment in schedule["segments"]:
@@ -348,8 +354,8 @@ def build_ffmpeg_command(composition, asset_inputs, avatar_path, voice_path, cap
     base_label = "base0"
     for index, clip in enumerate(composition["visualClips"]):
         source_index = 1 if clip["kind"] == "avatar" else input_indices[clip["assetId"]]
-        start_frame = math.ceil(clip["startMs"] * fps / 1000)
-        end_frame = math.ceil((clip["startMs"] + clip["durationMs"]) * fps / 1000)
+        start_frame = _first_frame_at_or_after(clip["startMs"], fps)
+        end_frame = _first_frame_at_or_after(clip["startMs"] + clip["durationMs"], fps)
         frame_count = end_frame - start_frame
         if frame_count <= 0:
             continue
