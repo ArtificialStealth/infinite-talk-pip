@@ -116,8 +116,71 @@ def _ass_text(value):
     return str(value).replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}").replace("\n", "\\N")
 
 
+def _caption_position_schedule(captions, canvas):
+    if not isinstance(captions, dict) or "positionSchedule" not in captions:
+        return None
+    schedule = captions["positionSchedule"]
+    label = "caption position schedule"
+    if not isinstance(schedule, dict):
+        raise CompositionValidationError("invalid " + label)
+    if type(schedule.get("version")) is not int or schedule["version"] != 1:
+        raise CompositionValidationError("invalid " + label + " version")
+    if type(schedule.get("fps")) is not int or schedule["fps"] != 30 or schedule["fps"] != canvas["fps"]:
+        raise CompositionValidationError("invalid " + label + " fps")
+    segments = schedule.get("segments")
+    if not isinstance(segments, list) or not segments:
+        raise CompositionValidationError("invalid " + label + " segments")
+    total_frames = math.ceil(canvas["durationMs"] * schedule["fps"] / 1000)
+    expected_start = 0
+    for segment in segments:
+        if not isinstance(segment, dict):
+            raise CompositionValidationError("invalid " + label + " segment")
+        start, end = segment.get("startFrame"), segment.get("endFrame")
+        if (type(start) is not int or type(end) is not int
+                or start != expected_start or end <= start or end > total_frames):
+            raise CompositionValidationError("invalid " + label + " frames")
+        _number(segment.get("x"), label + " x", 0, 1)
+        _number(segment.get("y"), label + " y", 0, 1)
+        expected_start = end
+    if expected_start != total_frames:
+        raise CompositionValidationError("invalid " + label + " coverage")
+    return schedule
+
+
+def _ass_frame_time(frame, fps):
+    # ASS timestamps use centiseconds. At 30 fps, flooring stays after the prior frame
+    # and at/before this frame; rounding up would switch one output frame late.
+    return _ass_time((frame * 100 // fps) * 10)
+
+
+def _scheduled_phrase_intervals(phrase, words, schedule, highlight):
+    fps = schedule["fps"]
+    start = math.ceil(phrase["startMs"] * fps / 1000)
+    end = math.ceil(phrase["endMs"] * fps / 1000)
+    word_frames = [
+        (math.ceil(word["startMs"] * fps / 1000), math.ceil(word["endMs"] * fps / 1000))
+        for word in words
+    ]
+    for segment in schedule["segments"]:
+        segment_start = max(start, segment["startFrame"])
+        segment_end = min(end, segment["endFrame"])
+        if segment_start >= segment_end:
+            continue
+        boundaries = {segment_start, segment_end}
+        if highlight:
+            boundaries.update(frame for times in word_frames for frame in times if segment_start < frame < segment_end)
+        boundaries = sorted(boundaries)
+        for event_start, event_end in zip(boundaries, boundaries[1:]):
+            active_index = None
+            if highlight:
+                active_index = next((index for index, (word_start, word_end) in enumerate(word_frames)
+                                     if word_start <= event_start < word_end), None)
+            yield event_start, event_end, active_index, segment
+
+
 def build_ass_captions(composition, captions):
     canvas = composition["canvas"]
+    schedule = _caption_position_schedule(captions, canvas)
     style = composition.get("captionStyle") or {}
     width, height = canvas["width"], canvas["height"]
     position = style.get("position") if isinstance(style.get("position"), dict) else {}
@@ -125,6 +188,8 @@ def build_ass_captions(composition, captions):
     y = round(_number(position.get("y", 0.82), "caption y", 0, 1) * height)
     text_align = style.get("textAlign", "center")
     alignment = {"left": 1, "center": 2, "right": 3}.get(text_align, 2)
+    if schedule is not None:
+        alignment += 3
     font_family = str(style.get("fontFamily", "Inter")).split(",", 1)[0].strip()
     font_family = re.sub(r"[^A-Za-z0-9 _-]", "", font_family)[:64] or "Inter"
     font_size = int(_number(style.get("fontSize", 56), "caption font size", 12, 240))
@@ -177,7 +242,23 @@ def build_ass_captions(composition, captions):
         if not phrase_words:
             continue
         rendered_words = [str(item.get("text", "")).upper() if uppercase else str(item.get("text", "")) for item in phrase_words]
-        if highlight:
+        if schedule is not None:
+            for start_frame, end_frame, active_index, segment in _scheduled_phrase_intervals(phrase, phrase_words, schedule, highlight):
+                # Preview position is the center of the maxWidth caption box,
+                # even when text within that box is left- or right-aligned.
+                offset = {"left": -max_width / 2, "right": max_width / 2}.get(text_align, 0)
+                scheduled_x = round((segment["x"] + offset) * width)
+                scheduled_y = round(segment["y"] * height)
+                if highlight:
+                    text = " ".join(r"{\c&H%s&}%s" % (active if index == active_index else primary, _ass_text(word))
+                                    for index, word in enumerate(rendered_words))
+                else:
+                    text = _ass_text(" ".join(rendered_words))
+                event_text = r"{\an%d\pos(%d,%d)}" % (alignment, scheduled_x, scheduled_y) + text
+                events.append("Dialogue: 0,%s,%s,Captions,,0,0,0,,%s" % (
+                    _ass_frame_time(start_frame, schedule["fps"]), _ass_frame_time(end_frame, schedule["fps"]), event_text,
+                ))
+        elif highlight:
             for active_index, word in enumerate(phrase_words):
                 pieces = []
                 for index, text in enumerate(rendered_words):
