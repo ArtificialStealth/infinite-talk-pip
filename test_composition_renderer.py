@@ -132,11 +132,36 @@ class FfmpegCompositionTests(unittest.TestCase):
         self.assertLess(filters.index("[1:v]"), filters.index("[3:v]"))
         self.assertIn("scale=1080:1920:force_original_aspect_ratio=increase", filters)
         self.assertIn("scale=324:324:force_original_aspect_ratio=increase", filters)
-        self.assertIn("enable='between(t,5.000,9.000)'", filters)
+        self.assertIn("enable='gte(n,150)*lt(n,270)'", filters)
         self.assertIn("colorchannelmixer=aa=0.800", filters)
         self.assertIn("subtitles=filename='/tmp/captions.ass'", filters)
         self.assertIn("-crf", command)
         self.assertEqual(command[command.index("-crf") + 1], "18")
+
+    def test_visual_enable_uses_half_open_ceil_frame_boundaries(self):
+        document = composition()
+        document["clips"][1].update(startMs=101, durationMs=400)
+        normalized = validate_composition(document, {"asset-1": "https://example.test/product.png"})
+        command = build_ffmpeg_command(
+            normalized, {"asset-1": {"path": "/tmp/product.png", "kind": "image"}},
+            "/tmp/avatar.mp4", "/tmp/voice.mp3", "/tmp/captions.ass", "/tmp/final.mp4",
+        )
+        filters = command[command.index("-filter_complex") + 1]
+        self.assertIn("enable='gte(n,4)*lt(n,16)'", filters)
+        self.assertIn("trim=start=0.000:duration=0.400000000,setpts=PTS-STARTPTS,fps=30,trim=end_frame=12,setpts=PTS+4", filters)
+        self.assertNotIn("between(t,", filters)
+
+    def test_rotated_visual_uses_angle_bounds_and_preserves_transform_center(self):
+        document = composition()
+        document["clips"][1]["transform"].update(x=380, y=1400, width=320, height=160, rotation=30)
+        normalized = validate_composition(document, {"asset-1": "https://example.test/product.png"})
+        command = build_ffmpeg_command(
+            normalized, {"asset-1": {"path": "/tmp/product.png", "kind": "image"}},
+            "/tmp/avatar.mp4", "/tmp/voice.mp3", None, "/tmp/final.mp4",
+        )
+        filters = command[command.index("-filter_complex") + 1]
+        self.assertIn("format=rgba,rotate=30.000000*PI/180:c=none:ow=rotw(30.000000*PI/180):oh=roth(30.000000*PI/180)", filters)
+        self.assertIn("overlay='380+(320-overlay_w)/2':'1400+(160-overlay_h)/2'", filters)
 
     def test_smaller_contain_fit_uses_transparent_padding_instead_of_crop(self):
         document = composition()

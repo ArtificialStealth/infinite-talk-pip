@@ -348,25 +348,37 @@ def build_ffmpeg_command(composition, asset_inputs, avatar_path, voice_path, cap
     base_label = "base0"
     for index, clip in enumerate(composition["visualClips"]):
         source_index = 1 if clip["kind"] == "avatar" else input_indices[clip["assetId"]]
-        start = clip["startMs"] / 1000.0
-        end = (clip["startMs"] + clip["durationMs"]) / 1000.0
+        start_frame = math.ceil(clip["startMs"] * fps / 1000)
+        end_frame = math.ceil((clip["startMs"] + clip["durationMs"]) * fps / 1000)
+        frame_count = end_frame - start_frame
+        if frame_count <= 0:
+            continue
         offset = clip.get("sourceOffsetMs", 0) / 1000.0
-        duration = clip["durationMs"] / 1000.0
+        duration = frame_count / fps
         clip_label = "clip%d" % index
-        chain = "[%d:v]trim=start=%.3f:duration=%.3f,setpts=PTS-STARTPTS+%.3f/TB,%s%s" % (
-            source_index, offset, duration, start, _fit_filter(clip, canvas), _mask_filter(clip),
+        # Normalize both source coverage and output timestamps to the same frame
+        # interval as the editor/caption schedule. Raw millisecond trim can reach
+        # EOF one frame early when the visible interval starts between frames.
+        chain = "[%d:v]trim=start=%.3f:duration=%.9f,setpts=PTS-STARTPTS,fps=%d,trim=end_frame=%d,setpts=PTS+%d,%s%s" % (
+            source_index, offset, duration, fps, frame_count, start_frame, _fit_filter(clip, canvas), _mask_filter(clip),
         )
         opacity = float(clip.get("opacity", 1))
         if opacity < 1:
             chain += ",format=rgba,colorchannelmixer=aa=%.3f" % opacity
-        rotation = float(clip["transform"].get("rotation", 0))
+        transform = clip["transform"]
+        overlay_x, overlay_y = str(round(transform["x"])), str(round(transform["y"]))
+        rotation = float(transform.get("rotation", 0))
         if abs(rotation) > 0.001:
-            chain += ",rotate=%.6f*PI/180:c=none:ow=rotw(iw):oh=roth(ih)" % rotation
+            angle = "%.6f*PI/180" % rotation
+            chain += ",format=rgba,rotate=%s:c=none:ow=rotw(%s):oh=roth(%s)" % (angle, angle, angle)
+            # CSS rotates around the transform center; FFmpeg expands the
+            # rotated image, so move its new top-left back by half that growth.
+            overlay_x = "'%d+(%d-overlay_w)/2'" % (round(transform["x"]), round(transform["width"]))
+            overlay_y = "'%d+(%d-overlay_h)/2'" % (round(transform["y"]), round(transform["height"]))
         filters.append(chain + "[%s]" % clip_label)
         output_label = "base%d" % (index + 1)
-        transform = clip["transform"]
-        filters.append("[%s][%s]overlay=%d:%d:eof_action=pass:shortest=0:enable='between(t,%.3f,%.3f)'[%s]" % (
-            base_label, clip_label, round(transform["x"]), round(transform["y"]), start, end, output_label,
+        filters.append("[%s][%s]overlay=%s:%s:eof_action=pass:shortest=0:enable='gte(n,%d)*lt(n,%d)'[%s]" % (
+            base_label, clip_label, overlay_x, overlay_y, start_frame, end_frame, output_label,
         ))
         base_label = output_label
     if captions_path:
