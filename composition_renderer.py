@@ -383,8 +383,11 @@ def build_ffmpeg_command(composition, asset_inputs, avatar_path, voice_path, cap
             overlay_y = "'%d+(%d-overlay_h)/2'" % (round(transform["y"]), round(transform["height"]))
         filters.append(chain + "[%s]" % clip_label)
         output_label = "base%d" % (index + 1)
-        filters.append("[%s][%s]overlay=%s:%s:eof_action=pass:shortest=0:enable='gte(n,%d)*lt(n,%d)'[%s]" % (
-            base_label, clip_label, overlay_x, overlay_y, start_frame, end_frame, output_label,
+        # FFmpeg evaluates enable for both inputs: a separately sourced image's
+        # local n starts at zero even when its PTS is shifted onto the timeline.
+        # Both inputs share timeline timestamps, so derive the CFR frame from t.
+        filters.append("[%s][%s]overlay=%s:%s:eof_action=pass:shortest=0:enable='gte(round(t*%d),%d)*lt(round(t*%d),%d)'[%s]" % (
+            base_label, clip_label, overlay_x, overlay_y, fps, start_frame, fps, end_frame, output_label,
         ))
         base_label = output_label
     if captions_path:

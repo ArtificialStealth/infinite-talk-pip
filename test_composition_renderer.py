@@ -132,7 +132,7 @@ class FfmpegCompositionTests(unittest.TestCase):
         self.assertLess(filters.index("[1:v]"), filters.index("[3:v]"))
         self.assertIn("scale=1080:1920:force_original_aspect_ratio=increase", filters)
         self.assertIn("scale=324:324:force_original_aspect_ratio=increase", filters)
-        self.assertIn("enable='gte(n,150)*lt(n,270)'", filters)
+        self.assertIn("enable='gte(round(t*30),150)*lt(round(t*30),270)'", filters)
         self.assertIn("colorchannelmixer=aa=0.800", filters)
         self.assertIn("subtitles=filename='/tmp/captions.ass'", filters)
         self.assertIn("-crf", command)
@@ -147,7 +147,7 @@ class FfmpegCompositionTests(unittest.TestCase):
             "/tmp/avatar.mp4", "/tmp/voice.mp3", "/tmp/captions.ass", "/tmp/final.mp4",
         )
         filters = command[command.index("-filter_complex") + 1]
-        self.assertIn("enable='gte(n,4)*lt(n,16)'", filters)
+        self.assertIn("enable='gte(round(t*30),4)*lt(round(t*30),16)'", filters)
         self.assertIn("trim=start=0.000:duration=0.400000000,setpts=PTS-STARTPTS,fps=30,trim=end_frame=12,setpts=PTS+4", filters)
         self.assertNotIn("between(t,", filters)
 
@@ -172,7 +172,7 @@ class FfmpegCompositionTests(unittest.TestCase):
             "/tmp/avatar.mp4", "/tmp/voice.mp3", None, "/tmp/final.mp4",
         )
         filters = command[command.index("-filter_complex") + 1]
-        self.assertIn("enable='gte(n,8)*lt(n,16)'", filters)
+        self.assertIn("enable='gte(round(t*30),8)*lt(round(t*30),16)'", filters)
         self.assertIn("trim=end_frame=8,setpts=PTS+8", filters)
 
     def test_smaller_contain_fit_uses_transparent_padding_instead_of_crop(self):

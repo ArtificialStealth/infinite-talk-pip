@@ -1,3 +1,4 @@
+import copy
 import json
 import math
 import os
@@ -168,6 +169,69 @@ class FfmpegRenderIntegrationTests(unittest.TestCase):
             self.assertAlmostEqual(max_y - min_y + 1, (320 * math.sin(angle) + 160 * math.cos(angle)) / 4, delta=2)
             # Transparent corners must retain the canvas rather than become black.
             self.assertAlmostEqual(frame[min_y * 270 + min_x], 64, delta=5)
+
+    def test_distinct_rounded_cards_and_captions_switch_on_timeline_frames(self):
+        with tempfile.TemporaryDirectory() as directory:
+            avatar = os.path.join(directory, "avatar.mp4")
+            voice = os.path.join(directory, "voice.wav")
+            product = os.path.join(directory, "product.png")
+            output = os.path.join(directory, "cards.mp4")
+            captions_path = os.path.join(directory, "captions.ass")
+            subprocess.run([FFMPEG, "-y", "-f", "lavfi", "-i", "color=c=black:s=540x960:r=30:d=15.233",
+                            "-c:v", "libx264", "-pix_fmt", "yuv420p", avatar], check=True, capture_output=True, timeout=30)
+            subprocess.run([FFMPEG, "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=15.233", voice],
+                           check=True, capture_output=True, timeout=30)
+            subprocess.run([FFMPEG, "-y", "-f", "lavfi", "-i", "color=c=white:s=720x440", "-frames:v", "1", product],
+                           check=True, capture_output=True, timeout=30)
+            document = composition()
+            document["canvas"]["durationMs"] = 15233
+            document["captionStyle"].update(fontSize=80, activeWordColor="#ffffff")
+            card = document["clips"][1]
+            document["clips"] = []
+            assets = {}
+            for index, y in enumerate([1250, 100, 1250, 100]):
+                asset_id = "asset-%d" % index
+                asset_path = os.path.join(directory, "asset_%02d.media" % index)
+                shutil.copyfile(product, asset_path)
+                assets[asset_id] = {"path": asset_path, "kind": "image"}
+                item = copy.deepcopy(card)
+                item.update(id="card-%d" % index, assetId=asset_id, startMs=index * 3750, durationMs=3750, opacity=1,
+                            transform={"x": 180, "y": y, "width": 720, "height": 440, "rotation": 0})
+                document["clips"].append(item)
+            normalized = validate_composition(document, {key: "https://example.test/product.png" for key in assets})
+            intervals = [(0, 113, 0.18), (113, 225, 0.82), (225, 338, 0.18), (338, 457, 0.82)]
+            captions = {
+                "words": [{"text": "Proof", "startMs": 0, "endMs": 15233}],
+                "phrases": [{"startMs": 0, "endMs": 15233, "wordStart": 0, "wordEnd": 1}],
+                "positionSchedule": {"version": 1, "fps": 30, "segments": [
+                    {"startFrame": start, "endFrame": end, "x": 0.5, "y": y}
+                    for start, end, y in intervals
+                ]},
+            }
+            with open(captions_path, "w", encoding="utf-8") as handle:
+                handle.write(build_ass_captions(normalized, captions))
+            command = build_ffmpeg_command(normalized, assets,
+                                           avatar, voice, captions_path, output)
+            command[0] = FFMPEG
+            result = subprocess.run(command, capture_output=True, text=True, timeout=90)
+            self.assertEqual(result.returncode, 0, result.stderr[-2000:])
+            indices = [0, 1, 30, 112, 113, 114, 120, 224, 225, 226, 240, 337, 338, 339, 360, 449, 450, 451, 456]
+            for index, frame in zip(indices, self.decode_frames(output, indices)):
+                bottom_card = index < 113 or 225 <= index < 338
+                top_card = 113 <= index < 225 or 338 <= index < 450
+                with self.subTest(frame=index):
+                    # Off-center samples do not intersect the centered caption.
+                    for y, visible in [(1470, bottom_card), (320, top_card)]:
+                        pixel = frame[round(y / 4) * 270 + 55]
+                        if visible:
+                            self.assertGreater(pixel, 200, "active card missing")
+                        else:
+                            self.assertLess(pixel, 30, "inactive card remains visible")
+                    caption_y = 0.18 if bottom_card else 0.82
+                    center_row = round(caption_y * 480)
+                    band = frame[(center_row - 18) * 270:(center_row + 18) * 270]
+                    self.assertGreater(sum(pixel > 200 for pixel in band), 50,
+                                       "caption missing from the side opposite the active card")
 
     def assert_popup_and_caption_timing(self, start_ms, duration_ms, start_frame, end_frame):
         with tempfile.TemporaryDirectory() as directory:
